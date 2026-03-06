@@ -1,5 +1,9 @@
+import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { supabase } from "./supabase";
+import { supabase, supabaseAdmin } from "./supabase";
+
+// Usa o cliente admin (bypass RLS) no servidor, com fallback para o anon
+const db = supabaseAdmin || supabase;
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
@@ -10,7 +14,7 @@ export interface MemoryMetadata {
   role: "user" | "assistant";
   timestamp: string;
   topic?: string;
-  [key: string]: any;
+  [key: string]: string | boolean | number | undefined;
 }
 
 export const memoryService = {
@@ -37,15 +41,15 @@ export const memoryService = {
         first.values.length,
       );
       return first.values;
-    } catch (error: any) {
+    } catch (error: unknown) {
       try {
-        const fs = require("fs");
-        const logError = `\n[${new Date().toISOString()}] Error: ${error.message}\nStack: ${error.stack}\n`;
+        const err = error instanceof Error ? error : new Error(String(error));
+        const logError = `\n[${new Date().toISOString()}] Error: ${err.message}\nStack: ${err.stack}\n`;
         fs.appendFileSync(
           "C:\\Users\\dslps\\AppData\\Local\\Temp\\jarvis-debug.log",
           logError,
         );
-      } catch (e) {}
+      } catch {}
       console.error("Erro ao gerar embedding:", error);
       throw error;
     }
@@ -66,7 +70,7 @@ export const memoryService = {
       console.log("[LTM] Embedding gerado com sucesso.");
 
       console.log("[LTM] Salvando no Supabase...");
-      const { error } = await supabase.from("memories").insert({
+      const { error } = await db.from("memories").insert({
         content,
         embedding,
         metadata,
@@ -94,7 +98,7 @@ export const memoryService = {
 
       const queryEmbedding = await this.generateEmbedding(query);
 
-      const { data, error } = await supabase.rpc("match_memories", {
+      const { data, error } = await db.rpc("match_memories", {
         query_embedding: queryEmbedding,
         match_threshold: 0.5,
         match_count: limit,
@@ -112,14 +116,14 @@ export const memoryService = {
    */
   async saveKeyValue(
     key: string,
-    value: any,
+    value: unknown,
     metadata?: MemoryMetadata,
   ): Promise<boolean> {
     try {
       const content = typeof value === "string" ? value : JSON.stringify(value);
       const meta = { ...(metadata || {}), key, kv: true };
 
-      const { error } = await supabase.from("memories").insert({
+      const { error } = await db.from("memories").insert({
         content,
         embedding: null,
         metadata: meta,
@@ -142,9 +146,9 @@ export const memoryService = {
    */
   async getKeyValue(
     key: string,
-  ): Promise<{ content: any; metadata: any } | null> {
+  ): Promise<{ content: unknown; metadata: Record<string, unknown> } | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("memories")
         .select("content,metadata")
         .eq("metadata->>key", key)
@@ -158,11 +162,14 @@ export const memoryService = {
 
       if (!data || data.length === 0) return null;
 
-      const row = data[0] as any;
-      let content: any = row.content;
+      const row = data[0] as {
+        content: string;
+        metadata: Record<string, unknown>;
+      };
+      let content: unknown = row.content;
       try {
         content = JSON.parse(row.content);
-      } catch (e) {
+      } catch {
         // manter como string se não for JSON
       }
 
@@ -178,7 +185,7 @@ export const memoryService = {
    */
   async getAllPreferences(): Promise<Array<{ key: string; value: string }>> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("memories")
         .select("content,metadata")
         .eq("metadata->>kv", "true")
@@ -194,8 +201,11 @@ export const memoryService = {
       // Dedup by key — keep the most recent (first in descending order)
       const seen = new Set<string>();
       const prefs: Array<{ key: string; value: string }> = [];
-      for (const row of data as any[]) {
-        const key = row.metadata?.key;
+      for (const row of data as Array<{
+        content: string;
+        metadata: Record<string, unknown>;
+      }>) {
+        const key = row.metadata?.key as string | undefined;
         if (key && !seen.has(key)) {
           seen.add(key);
           prefs.push({ key, value: row.content });
@@ -213,7 +223,7 @@ export const memoryService = {
    */
   async deleteKeyValue(key: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await db
         .from("memories")
         .delete()
         .eq("metadata->>key", key)

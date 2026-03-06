@@ -1,6 +1,64 @@
 import { getGeminiClient } from "@/lib/gemini-server";
+import { Type, type Tool } from "@google/genai";
 import { MODELS, JARVIS_SYSTEM_INSTRUCTION } from "@/lib/constants";
 import { memoryService } from "@/lib/memoryService";
+
+const memoryTools: Tool[] = [
+  {
+    functionDeclarations: [
+      {
+        name: "save_preference",
+        description:
+          "Save user preference, fact, or any information the user explicitly asks to remember in long-term memory. Use whenever the user says 'remember', 'save', 'store', 'anota', 'salva', 'guarda', 'lembra', etc.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            key: {
+              type: Type.STRING,
+              description:
+                "Short descriptive snake_case identifier (e.g. 'favorite_color', 'user_name', 'birthday')",
+            },
+            value: {
+              type: Type.STRING,
+              description: "The value to save",
+            },
+          },
+          required: ["key", "value"],
+        },
+      },
+      {
+        name: "get_preference",
+        description:
+          "Retrieve a previously saved user preference or piece of information by its key.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            key: {
+              type: Type.STRING,
+              description: "The key name of the preference to retrieve",
+            },
+          },
+          required: ["key"],
+        },
+      },
+      {
+        name: "delete_preference",
+        description:
+          "Delete/forget a previously saved user preference or piece of information.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            key: {
+              type: Type.STRING,
+              description: "The key name of the preference to delete",
+            },
+          },
+          required: ["key"],
+        },
+      },
+    ],
+  },
+];
 
 async function buildPrefsContext(): Promise<string> {
   try {
@@ -32,35 +90,6 @@ export async function POST(request: Request) {
     const lastMessage = messages[messages.length - 1];
     const userText = lastMessage.parts[0].text;
 
-    // Detectar intenções simples de salvar preferências (ex: "salva minha cor favorita #00ff88")
-    let preferenceSavedNote = "";
-    try {
-      const saveIntent =
-        /(?:salv(?:a|ar|e)|guardar|guarda|save)/i.test(userText) &&
-        /cor favorita|favorite color/i.test(userText);
-      if (saveIntent) {
-        const hexMatch = userText.match(/#([0-9a-fA-F]{3,6})/);
-        const wordMatch = userText.match(
-          /\b(vermelho|azul|verde|amarelo|preto|branco|rosa|roxo|cinza|cinzato|marrom|laranja|purple|pink|red|blue|green|black|white|yellow)\b/i,
-        );
-        const value = hexMatch
-          ? `#${hexMatch[1]}`
-          : wordMatch
-            ? wordMatch[0]
-            : null;
-        if (value) {
-          await memoryService.saveKeyValue("favorite_color", value, {
-            role: "user",
-            timestamp: new Date().toISOString(),
-          });
-          preferenceSavedNote = `\n\n[LOCAL PREF SAVED] favorite_color=${value}`;
-          console.log("[LTM] preference saved from chat intent:", value);
-        }
-      }
-    } catch (err) {
-      console.error("Error detecting/saving preference intent:", err);
-    }
-
     // 1. Buscar memórias relevantes
     const similarMemories = await memoryService.searchSimilarMemories(userText);
     const memoryContext =
@@ -71,38 +100,112 @@ export async function POST(request: Request) {
     // 2. Criar instrução de sistema aumentada (com preferências + memórias semânticas)
     const prefsContext = await buildPrefsContext();
     const augmentedSystemInstruction =
-      JARVIS_SYSTEM_INSTRUCTION +
-      prefsContext +
-      memoryContext +
-      preferenceSavedNote;
+      JARVIS_SYSTEM_INSTRUCTION + prefsContext + memoryContext;
 
     const chat = ai.chats.create({
       model: MODELS.TEXT,
       history,
       config: {
         systemInstruction: augmentedSystemInstruction,
+        tools: memoryTools,
       },
-    });
-
-    const response = await chat.sendMessageStream({
-      message: userText,
     });
 
     let fullAssistantResponse = "";
 
     const stream = new ReadableStream({
       async start(controller) {
-        try {
-          for await (const chunk of response) {
+        const encoder = new TextEncoder();
+
+        async function processStream(streamIter: AsyncIterable<any>) {
+          let text = "";
+          const functionCalls: Array<{ name: string; args: any }> = [];
+          for await (const chunk of streamIter) {
             if (chunk.text) {
-              fullAssistantResponse += chunk.text;
-              controller.enqueue(new TextEncoder().encode(chunk.text));
+              text += chunk.text;
+              controller.enqueue(encoder.encode(chunk.text));
+            }
+            if (chunk.functionCalls?.length) {
+              functionCalls.push(...chunk.functionCalls);
             }
           }
+          return { text, functionCalls };
+        }
 
-          // 3. Salvar a interação na memória após o fim do stream (Fire and forget ou await)
-          // Salvamos o usuário e o assistente separadamente para buscas futuras mais precisas
-          await Promise.all([
+        async function executeFunctionCall(fc: {
+          name: string;
+          args: any;
+        }): Promise<any> {
+          const args = fc.args || {};
+          switch (fc.name) {
+            case "save_preference": {
+              const saved = await memoryService.saveKeyValue(
+                args.key,
+                args.value,
+                {
+                  role: "user",
+                  timestamp: new Date().toISOString(),
+                },
+              );
+              console.log(
+                `[LTM] Function call save_preference: key=${args.key}, value=${args.value}, success=${saved}`,
+              );
+              return {
+                success: saved,
+                message: saved
+                  ? `Preference '${args.key}' saved successfully`
+                  : "Failed to save preference",
+              };
+            }
+            case "get_preference": {
+              const kv = await memoryService.getKeyValue(args.key);
+              console.log(
+                `[LTM] Function call get_preference: key=${args.key}, found=${!!kv}`,
+              );
+              return kv
+                ? { found: true, key: args.key, value: kv.content }
+                : { found: false, key: args.key };
+            }
+            case "delete_preference": {
+              const deleted = await memoryService.deleteKeyValue(args.key);
+              console.log(
+                `[LTM] Function call delete_preference: key=${args.key}, success=${deleted}`,
+              );
+              return { success: deleted };
+            }
+            default:
+              return { error: `Unknown function: ${fc.name}` };
+          }
+        }
+
+        try {
+          let result = await processStream(
+            await chat.sendMessageStream({ message: userText }),
+          );
+          fullAssistantResponse += result.text;
+
+          // Loop para lidar com function calls (pode haver múltiplas rodadas)
+          let iterations = 0;
+          while (result.functionCalls.length > 0 && iterations++ < 5) {
+            const functionResponses = [];
+            for (const fc of result.functionCalls) {
+              const output = await executeFunctionCall(fc);
+              functionResponses.push({
+                functionResponse: { name: fc.name, response: output },
+              });
+            }
+
+            // Enviar resultados das funções de volta ao modelo
+            result = await processStream(
+              await chat.sendMessageStream({
+                message: functionResponses,
+              }),
+            );
+            fullAssistantResponse += result.text;
+          }
+
+          // Salvar a interação na memória (fire-and-forget com log de erro)
+          Promise.all([
             memoryService.saveMemory(userText, {
               role: "user",
               timestamp: new Date().toISOString(),
@@ -111,7 +214,9 @@ export async function POST(request: Request) {
               role: "assistant",
               timestamp: new Date().toISOString(),
             }),
-          ]);
+          ]).catch((err) =>
+            console.error("[LTM] Erro ao salvar conversa na memória:", err),
+          );
 
           controller.close();
         } catch (err) {
