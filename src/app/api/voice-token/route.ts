@@ -1,11 +1,10 @@
-import { getGeminiClient } from "@/lib/gemini-server";
 import {
   MODELS,
   JARVIS_SYSTEM_INSTRUCTION,
   DEFAULT_VOICE,
   VOICES,
 } from "@/lib/constants";
-import { Modality, Type, type Tool } from "@google/genai";
+import { Type, type Tool } from "@google/genai";
 
 const VOICE_TOOLS: Tool[] = [
   {
@@ -91,6 +90,53 @@ const VOICE_TOOLS: Tool[] = [
           properties: {},
         },
       },
+      {
+        name: "execute_code",
+        description:
+          "Execute a code snippet in a sandboxed environment and return the output. Use this when the user asks you to run, execute, test, or evaluate code. Supports JavaScript and Python.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            language: {
+              type: Type.STRING,
+              description: "The programming language: 'javascript' or 'python'",
+            },
+            code: {
+              type: Type.STRING,
+              description:
+                "The code to execute. Use console.log() for JS output or print() for Python output.",
+            },
+          },
+          required: ["language", "code"],
+        },
+        behavior: "NON_BLOCKING",
+      },
+      {
+        name: "show_code",
+        description:
+          "ALWAYS use this tool to display code visually on the user's screen. You MUST call this function whenever you want to show, present, demonstrate, or teach any code example. Never just say code verbally — always use this tool so the user can see it on screen. Supports all programming languages.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            language: {
+              type: Type.STRING,
+              description:
+                "The programming language (e.g. 'python', 'javascript', 'typescript', 'java', 'go', etc.)",
+            },
+            code: {
+              type: Type.STRING,
+              description: "The complete code snippet to display on screen",
+            },
+            title: {
+              type: Type.STRING,
+              description:
+                "Optional short title for the code card (e.g. 'QuickSort', 'Fibonacci', 'API Request')",
+            },
+          },
+          required: ["language", "code"],
+        },
+        behavior: "NON_BLOCKING",
+      },
     ],
   },
 ];
@@ -106,44 +152,56 @@ export async function POST(req: Request) {
     const voiceName =
       voiceId && validVoiceIds.includes(voiceId) ? voiceId : DEFAULT_VOICE;
 
-    const ai = getGeminiClient();
-    const now = new Date();
-    const expireTime = new Date(now.getTime() + 30 * 60 * 1000);
-    const newSessionExpireTime = new Date(now.getTime() + 2 * 60 * 1000);
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return Response.json(
+        { error: "GEMINI_API_KEY not configured" },
+        { status: 500 },
+      );
+    }
 
     // Inject current date/time in BRT so the model knows "now"
+    const now = new Date();
     const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000);
     const dateStr = brtNow.toISOString().replace("Z", "-03:00");
     const timeContext = `\n\nCURRENT DATE/TIME (Brasília): ${dateStr}`;
 
-    const token = await ai.authTokens.create({
-      config: {
-        httpOptions: { apiVersion: "v1alpha" },
-        uses: 1,
-        expireTime: expireTime.toISOString(),
-        newSessionExpireTime: newSessionExpireTime.toISOString(),
-        liveConnectConstraints: {
-          model: MODELS.LIVE_AUDIO,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            systemInstruction:
-              JARVIS_SYSTEM_INSTRUCTION + timeContext + prefsContext,
-            tools: VOICE_TOOLS,
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName,
-                },
-              },
+    // Build setup config for the client to send via WebSocket
+    const setupConfig = {
+      model: `models/${MODELS.LIVE_AUDIO}`,
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName,
             },
           },
         },
       },
-    });
+      systemInstruction: {
+        parts: [
+          { text: JARVIS_SYSTEM_INSTRUCTION + timeContext + prefsContext },
+        ],
+      },
+      tools: VOICE_TOOLS.map((t) => ({
+        functionDeclarations: t.functionDeclarations?.map((fd) => {
+          const decl: Record<string, unknown> = {
+            name: fd.name,
+            description: fd.description,
+            parameters: fd.parameters,
+          };
+          if ((fd as any).behavior) {
+            decl.behavior = (fd as any).behavior;
+          }
+          return decl;
+        }),
+      })),
+    };
 
     return Response.json({
-      token: token.name,
-      expiresAt: expireTime.toISOString(),
+      apiKey,
+      setupConfig,
     });
   } catch (error: unknown) {
     console.error("Voice token creation error:", error);

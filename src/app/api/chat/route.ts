@@ -2,6 +2,9 @@ import { getGeminiClient } from "@/lib/gemini-server";
 import { Type, type Tool } from "@google/genai";
 import { MODELS, JARVIS_SYSTEM_INSTRUCTION } from "@/lib/constants";
 import { memoryService } from "@/lib/memoryService";
+import { executeCode } from "@/lib/codeExecutor";
+
+export const runtime = "nodejs";
 
 const memoryTools: Tool[] = [
   {
@@ -54,6 +57,26 @@ const memoryTools: Tool[] = [
             },
           },
           required: ["key"],
+        },
+      },
+      {
+        name: "execute_code",
+        description:
+          "Execute a code snippet in a sandboxed environment and return the output. Use this when the user asks you to run, execute, test, or evaluate code. Supports JavaScript and Python.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            language: {
+              type: Type.STRING,
+              description: "The programming language: 'javascript' or 'python'",
+            },
+            code: {
+              type: Type.STRING,
+              description:
+                "The code to execute. Use console.log() for JS output or print() for Python output.",
+            },
+          },
+          required: ["language", "code"],
         },
       },
     ],
@@ -172,6 +195,36 @@ export async function POST(request: Request) {
                 `[LTM] Function call delete_preference: key=${args.key}, success=${deleted}`,
               );
               return { success: deleted };
+            }
+            case "execute_code": {
+              console.log(
+                `[CODE] Function call execute_code: language=${args.language}, code_length=${args.code?.length}`,
+              );
+              try {
+                const result = await executeCode(args.language, args.code);
+                console.log(
+                  `[CODE] Execution result: success=${result.success}, output_length=${result.output?.length}, time=${result.executionTimeMs}ms`,
+                );
+                return {
+                  success: result.success,
+                  output: result.output,
+                  error: result.error,
+                  executionTimeMs: result.executionTimeMs,
+                  language: result.language,
+                };
+              } catch (execErr) {
+                console.error("[CODE] Execute code error:", execErr);
+                return {
+                  success: false,
+                  output: "",
+                  error:
+                    execErr instanceof Error
+                      ? execErr.message
+                      : String(execErr),
+                  executionTimeMs: 0,
+                  language: args.language,
+                };
+              }
             }
             default:
               return { error: `Unknown function: ${fc.name}` };

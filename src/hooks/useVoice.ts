@@ -4,99 +4,12 @@ import { useState, useRef, useCallback } from "react";
 import { useAudioCapture } from "./useAudioCapture";
 import { useAudioPlayback } from "./useAudioPlayback";
 import { useWaveformAnalyzer } from "./useWaveformAnalyzer";
-import { MODELS, AUDIO } from "@/lib/constants";
+import { AUDIO } from "@/lib/constants";
 import { useAppStore } from "@/stores/appStore";
 import type { VoiceStatus } from "@/types/voice";
+import type { VoiceCodeCard } from "@/components/voice/CodeExecutionCard";
 
 const WS_BASE = "wss://generativelanguage.googleapis.com";
-
-const VOICE_FUNCTION_DECLARATIONS = [
-  {
-    functionDeclarations: [
-      {
-        name: "save_preference",
-        description:
-          "Saves a user preference or any information the user asks to remember. Use this whenever the user says to save, remember, store, or memorize something.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            key: {
-              type: "STRING",
-              description:
-                "A short identifier for the preference, e.g. 'favorite_color', 'name', 'birthday'",
-            },
-            value: {
-              type: "STRING",
-              description: "The value to save",
-            },
-          },
-          required: ["key", "value"],
-        },
-      },
-      {
-        name: "get_preference",
-        description:
-          "Retrieves a previously saved preference or piece of information. Use this when the user asks about something they previously asked to remember.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            key: {
-              type: "STRING",
-              description:
-                "The identifier of the preference to retrieve, e.g. 'favorite_color', 'name'",
-            },
-          },
-          required: ["key"],
-        },
-      },
-      {
-        name: "delete_preference",
-        description:
-          "Deletes/forgets a previously saved preference. Use this when the user asks to forget, remove, or delete a saved piece of information.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            key: {
-              type: "STRING",
-              description:
-                "The identifier of the preference to delete, e.g. 'favorite_color', 'name'",
-            },
-          },
-          required: ["key"],
-        },
-      },
-      {
-        name: "create_reminder",
-        description:
-          "Creates a scheduled reminder. Use this when the user asks to be reminded of something at a specific date/time. Convert the user's requested time to an ISO 8601 timestamp.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            content: {
-              type: "STRING",
-              description: "What to remind the user about",
-            },
-            remind_at: {
-              type: "STRING",
-              description:
-                "ISO 8601 timestamp with BRT offset for when to trigger the reminder, e.g. '2026-03-07T14:00:00-03:00'",
-            },
-          },
-          required: ["content", "remind_at"],
-        },
-      },
-      {
-        name: "list_reminders",
-        description:
-          "Lists upcoming reminders. Use this when the user asks what reminders they have scheduled.",
-        parameters: {
-          type: "OBJECT",
-          properties: {},
-        },
-      },
-    ],
-  },
-];
 
 /**
  * Executa uma function call do Gemini Live e retorna o resultado.
@@ -104,6 +17,7 @@ const VOICE_FUNCTION_DECLARATIONS = [
 async function executeFunctionCall(
   name: string,
   args: Record<string, string>,
+  onCodeCard?: (card: VoiceCodeCard) => void,
 ): Promise<Record<string, unknown>> {
   try {
     if (name === "save_preference") {
@@ -171,6 +85,54 @@ async function executeFunctionCall(
       return { found: false, message: "No upcoming reminders" };
     }
 
+    if (name === "execute_code") {
+      const res = await fetch("/api/code-execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: args.language, code: args.code }),
+      });
+      const data = await res.json();
+
+      if (onCodeCard) {
+        onCodeCard({
+          id: crypto.randomUUID(),
+          mode: "execution",
+          language: data.language || args.language,
+          code: args.code,
+          output: data.output || "",
+          error: data.error,
+          success: data.success,
+          executionTimeMs: data.executionTimeMs || 0,
+          timestamp: Date.now(),
+        });
+      }
+
+      return {
+        success: data.success,
+        output: data.output || "",
+        error: data.error,
+        executionTimeMs: data.executionTimeMs,
+        language: data.language,
+      };
+    }
+
+    if (name === "show_code") {
+      if (onCodeCard) {
+        onCodeCard({
+          id: crypto.randomUUID(),
+          mode: "display",
+          language: args.language || "code",
+          code: args.code,
+          title: args.title,
+          timestamp: Date.now(),
+        });
+      }
+      return {
+        success: true,
+        message: "Code displayed on screen for the user",
+      };
+    }
+
     return { error: `Unknown function: ${name}` };
   } catch (err) {
     console.error("[Voice] executeFunctionCall error:", err);
@@ -182,12 +144,17 @@ export function useVoice() {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const [codeCards, setCodeCards] = useState<VoiceCodeCard[]>([]);
   const mutedRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const capture = useAudioCapture();
   const playback = useAudioPlayback();
   const waveform = useWaveformAnalyzer();
   const selectedVoice = useAppStore((s) => s.selectedVoice);
+
+  const dismissCodeCard = useCallback((id: string) => {
+    setCodeCards((prev) => prev.filter((c) => c.id !== id));
+  }, []);
 
   const startSession = useCallback(async () => {
     try {
@@ -209,7 +176,7 @@ export function useVoice() {
         console.warn("[Voice] Failed to load preferences:", err);
       }
 
-      // Fetch ephemeral token from server with selected voice + preferences context
+      // Fetch API key and setup config from server
       const tokenRes = await fetch("/api/voice-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -219,24 +186,21 @@ export function useVoice() {
       if (!tokenRes.ok) {
         throw new Error(tokenData.error || "Failed to get voice token");
       }
-      const token = tokenData.token;
-      if (!token) {
-        throw new Error("Token is empty or undefined");
+      const { apiKey, setupConfig } = tokenData;
+      if (!apiKey) {
+        throw new Error("API key is missing");
       }
 
-      // Build WebSocket URL directly with v1alpha (bypassing SDK bug)
-      const wsUrl = `${WS_BASE}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
+      // Build WebSocket URL with v1beta + API key (supports full tool calling)
+      const wsUrl = `${WS_BASE}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        // Send setup message — config (tools, speechConfig, modalities)
-        // is already baked into the ephemeral token via BidiGenerateContentConstrained
+        // Send full setup message with model, config, tools, system instruction
         const setupMessage = {
-          setup: {
-            model: `models/${MODELS.LIVE_AUDIO}`,
-          },
+          setup: setupConfig,
         };
         ws.send(JSON.stringify(setupMessage));
         setStatus("connected");
@@ -280,6 +244,12 @@ export function useVoice() {
             event.data instanceof Blob ? await event.data.text() : event.data;
           const message = JSON.parse(raw);
 
+          // Debug: log all incoming messages to see what Gemini is sending
+          console.log(
+            "[Voice] WS message:",
+            JSON.stringify(message).slice(0, 500),
+          );
+
           // Handle setup complete
           if (message.setupComplete) {
             return;
@@ -295,18 +265,37 @@ export function useVoice() {
           // Handle function calls from the model (tool use)
           const toolCall = message.toolCall;
           if (toolCall?.functionCalls) {
+            // NON_BLOCKING functions (show_code, execute_code) are executed locally
+            // without sending toolResponse — the model continues talking.
+            const NON_BLOCKING_FUNCTIONS = new Set([
+              "show_code",
+              "execute_code",
+            ]);
             const functionResponses = [];
+
             for (const fc of toolCall.functionCalls) {
               console.log(`[Voice] Function call: ${fc.name}`, fc.args);
-              const result = await executeFunctionCall(fc.name, fc.args || {});
-              functionResponses.push({
-                id: fc.id,
-                name: fc.name,
-                response: result,
-              });
+              const result = await executeFunctionCall(
+                fc.name,
+                fc.args || {},
+                (card) => setCodeCards((prev) => [card, ...prev]),
+              );
+
+              // Only include blocking functions in toolResponse
+              if (!NON_BLOCKING_FUNCTIONS.has(fc.name)) {
+                functionResponses.push({
+                  id: fc.id,
+                  name: fc.name,
+                  response: result,
+                });
+              }
             }
-            // Send function responses back to the model
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
+
+            // Send tool responses only for blocking functions
+            if (
+              functionResponses.length > 0 &&
+              wsRef.current?.readyState === WebSocket.OPEN
+            ) {
               wsRef.current.send(
                 JSON.stringify({ toolResponse: { functionResponses } }),
               );
@@ -342,8 +331,17 @@ export function useVoice() {
 
       ws.onclose = (e) => {
         if (e.code !== 1000) {
-          const reason = e.reason || `Connection closed (code: ${e.code})`;
-          console.error("WebSocket closed:", reason);
+          const raw = e.reason || `Connection closed (code: ${e.code})`;
+          let reason = raw;
+          if (
+            raw.includes("not implemented") ||
+            raw.includes("not supported") ||
+            raw.includes("not enabled")
+          ) {
+            reason =
+              "Modelo de voz indisponível. Verifique se sua API key tem acesso ao Gemini Live Audio.";
+          }
+          console.error("WebSocket closed:", raw);
           setErrorMessage(reason);
           setStatus("error");
         } else {
@@ -384,9 +382,11 @@ export function useVoice() {
     status,
     errorMessage,
     muted,
+    codeCards,
     startSession,
     stopSession,
     toggleMute,
+    dismissCodeCard,
     getFrequencyData: waveform.getFrequencyData,
     getAverageAmplitude: waveform.getAverageAmplitude,
     captureAnalyser: capture.getAnalyser,

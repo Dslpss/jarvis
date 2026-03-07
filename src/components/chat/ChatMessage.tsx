@@ -1,58 +1,131 @@
-'use client';
+"use client";
 
-import { ChatMessage as ChatMessageType } from '@/types/chat';
-import { StreamingText } from './StreamingText';
-import { cn } from '@/lib/cn';
+import { ChatMessage as ChatMessageType } from "@/types/chat";
+import { CodeBlock } from "./CodeBlock";
+import { cn } from "@/lib/cn";
 
 interface ChatMessageProps {
   message: ChatMessageType;
 }
 
+type ContentSegment =
+  | { type: "text"; content: string }
+  | { type: "code"; content: string; language?: string };
+
+function parseMessageContent(
+  text: string,
+  isStreaming?: boolean,
+): ContentSegment[] {
+  const segments: ContentSegment[] = [];
+  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({
+        type: "text",
+        content: text.slice(lastIndex, match.index),
+      });
+    }
+    segments.push({
+      type: "code",
+      content: match[2].trimEnd(),
+      language: match[1] || undefined,
+    });
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    const remaining = text.slice(lastIndex);
+    // During streaming, check for an unclosed code block
+    if (isStreaming) {
+      const unclosedMatch = remaining.match(/```(\w*)\n?([\s\S]*)$/);
+      if (unclosedMatch) {
+        const beforeCode = remaining.slice(0, unclosedMatch.index);
+        if (beforeCode) {
+          segments.push({ type: "text", content: beforeCode });
+        }
+        segments.push({
+          type: "code",
+          content: unclosedMatch[2],
+          language: unclosedMatch[1] || undefined,
+        });
+      } else {
+        segments.push({ type: "text", content: remaining });
+      }
+    } else {
+      segments.push({ type: "text", content: remaining });
+    }
+  }
+
+  return segments.length > 0 ? segments : [{ type: "text", content: text }];
+}
+
 export function ChatMessage({ message }: ChatMessageProps) {
-  const isUser = message.role === 'user';
-  const time = new Date(message.timestamp).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
+  const isUser = message.role === "user";
+  const time = new Date(message.timestamp).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
     hour12: false,
   });
 
   return (
-    <div className={cn('flex gap-3 px-4', isUser ? 'justify-end' : 'justify-start')}>
+    <div
+      className={cn(
+        "flex gap-3 px-4",
+        isUser ? "justify-end" : "justify-start",
+      )}>
       {/* Avatar for Jarvis */}
       {!isUser && (
         <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-[#00d4ff]/10 border border-[#00d4ff]/30 flex items-center justify-center shadow-[0_0_10px_rgba(0,212,255,0.2)]">
-          <span className="text-xs font-bold text-[#00d4ff] font-[var(--font-orbitron)]">J</span>
+          <span className="text-xs font-bold text-[#00d4ff] font-[var(--font-orbitron)]">
+            J
+          </span>
         </div>
       )}
 
       <div
         className={cn(
-          'max-w-[85%] px-5 py-3 rounded-2xl relative transition-all duration-300',
+          "max-w-[85%] px-5 py-3 rounded-2xl relative transition-all duration-300",
           isUser
-            ? 'bg-[#0055ff]/10 border border-[#0055ff]/20 rounded-tr-none text-right ml-12'
-            : 'bg-[#00d4ff]/5 border border-[#00d4ff]/20 rounded-tl-none mr-12 backdrop-blur-md shadow-[0_0_15px_rgba(0,212,255,0.05)]'
-        )}
-      >
+            ? "bg-[#0055ff]/10 border border-[#0055ff]/20 rounded-tr-none text-right ml-12"
+            : "bg-[#00d4ff]/5 border border-[#00d4ff]/20 rounded-tl-none mr-12 backdrop-blur-md shadow-[0_0_15px_rgba(0,212,255,0.05)]",
+        )}>
         {/* Holographic accent for Jarvis messages */}
         {!isUser && (
           <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-[#00d4ff]/[0.03] to-transparent pointer-events-none rounded-2xl" />
         )}
 
-        {message.isStreaming ? (
-          <StreamingText
-            text={message.text}
-            isStreaming={message.isStreaming}
-            className="text-sm text-[#e0f0ff] leading-relaxed"
-          />
-        ) : (
-          <p className="text-sm text-[#e0f0ff] leading-relaxed whitespace-pre-wrap break-words">
-            {message.text}
-          </p>
-        )}
-        <div className={cn("flex items-center gap-1 mt-2", isUser ? "justify-end" : "justify-start")}>
-          <span className="text-[9px] uppercase tracking-tighter text-[#5a7a90]/70 font-bold">{isUser ? 'USUÁRIO' : 'JARVIS'}</span>
+        <div className="text-sm text-[#e0f0ff] leading-relaxed">
+          {parseMessageContent(message.text, message.isStreaming).map(
+            (seg, i) =>
+              seg.type === "code" ? (
+                <CodeBlock key={i} code={seg.content} language={seg.language} />
+              ) : (
+                <span key={i} className="whitespace-pre-wrap break-words">
+                  {seg.content}
+                </span>
+              ),
+          )}
+          {message.isStreaming && (
+            <span className="inline-block w-2 h-4 ml-0.5 bg-[#00d4ff] animate-pulse align-middle" />
+          )}
+        </div>
+
+        <div
+          className={cn(
+            "flex items-center gap-1 mt-2",
+            isUser ? "justify-end" : "justify-start",
+          )}>
+          <span className="text-[9px] uppercase tracking-tighter text-[#5a7a90]/70 font-bold">
+            {isUser ? "USUÁRIO" : "JARVIS"}
+          </span>
           <span className="text-[10px] text-[#5a7a90]/50 font-medium">•</span>
-          <span className="text-[9px] text-[#5a7a90]/70 font-medium">{time}</span>
+          <span className="text-[9px] text-[#5a7a90]/70 font-medium">
+            {time}
+          </span>
         </div>
       </div>
     </div>
