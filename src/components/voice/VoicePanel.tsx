@@ -56,10 +56,14 @@ export function VoicePanel() {
         </div>
       </HudFrame>
 
-      {/* Code cards — floating overlay at the bottom */}
+      {/* Code cards — left side on desktop, bottom sheet on mobile */}
       {codeCards.length > 0 && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4">
-          <div className="flex flex-col items-center gap-3 max-h-72 overflow-y-auto scrollbar-thin">
+        <div
+          className="fixed z-50 
+          bottom-0 left-0 right-0 max-h-[50vh] p-3
+          sm:bottom-auto sm:right-auto sm:top-20 sm:left-4 sm:w-[28rem] sm:max-h-[calc(100vh-10rem)] sm:p-0
+          overflow-y-auto scrollbar-thin">
+          <div className="flex flex-col gap-3">
             {codeCards.map((card) => (
               <VoiceCodeCardComponent
                 key={card.id}
