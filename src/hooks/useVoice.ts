@@ -147,6 +147,7 @@ export function useVoice() {
   const [codeCards, setCodeCards] = useState<VoiceCodeCard[]>([]);
   const mutedRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const msgQueueRef = useRef<Promise<void>>(Promise.resolve());
   const capture = useAudioCapture();
   const playback = useAudioPlayback();
   const waveform = useWaveformAnalyzer();
@@ -237,90 +238,99 @@ export function useVoice() {
           });
       };
 
-      ws.onmessage = async (event) => {
-        try {
-          // Gemini Live API sends messages as Blob; read as text first
-          const raw =
-            event.data instanceof Blob ? await event.data.text() : event.data;
-          const message = JSON.parse(raw);
+      ws.onmessage = (event) => {
+        // Queue messages to prevent race conditions with async handlers
+        msgQueueRef.current = msgQueueRef.current.then(async () => {
+          try {
+            const raw =
+              event.data instanceof Blob
+                ? await event.data.text()
+                : event.data;
+            const message = JSON.parse(raw);
 
-          // Debug: log all incoming messages to see what Gemini is sending
-          console.log(
-            "[Voice] WS message:",
-            JSON.stringify(message).slice(0, 500),
-          );
+            console.log(
+              "[Voice] WS message:",
+              JSON.stringify(message).slice(0, 500),
+            );
 
-          // Handle setup complete
-          if (message.setupComplete) {
-            return;
-          }
+            // Handle setup complete
+            if (message.setupComplete) {
+              return;
+            }
 
-          // Handle interruption
-          if (message.serverContent?.interrupted) {
-            playback.clearQueue();
-            setStatus("listening");
-            return;
-          }
+            // Handle interruption
+            if (message.serverContent?.interrupted) {
+              playback.clearQueue();
+              setStatus("listening");
+              return;
+            }
 
-          // Handle function calls from the model (tool use)
-          const toolCall = message.toolCall;
-          if (toolCall?.functionCalls) {
-            // NON_BLOCKING functions (show_code, execute_code) are executed locally
-            // without sending toolResponse — the model continues talking.
-            const NON_BLOCKING_FUNCTIONS = new Set([
-              "show_code",
-              "execute_code",
-            ]);
-            const functionResponses = [];
-
-            for (const fc of toolCall.functionCalls) {
-              console.log(`[Voice] Function call: ${fc.name}`, fc.args);
-              const result = await executeFunctionCall(
-                fc.name,
-                fc.args || {},
-                (card) => setCodeCards((prev) => [card, ...prev]),
+            // Handle tool call cancellation
+            if (message.toolCallCancellation?.ids) {
+              console.warn(
+                "[Voice] Tool calls cancelled:",
+                message.toolCallCancellation.ids,
               );
+              return;
+            }
 
-              // Only include blocking functions in toolResponse
-              if (!NON_BLOCKING_FUNCTIONS.has(fc.name)) {
+            // Handle function calls from the model (tool use)
+            const toolCall = message.toolCall;
+            if (toolCall?.functionCalls) {
+              const functionResponses = [];
+
+              for (const fc of toolCall.functionCalls) {
+                console.log(
+                  `[Voice] Function call: ${fc.name} (id: ${fc.id})`,
+                  fc.args,
+                );
+                const result = await executeFunctionCall(
+                  fc.name,
+                  fc.args || {},
+                  (card) => setCodeCards((prev) => [card, ...prev]),
+                );
+
                 functionResponses.push({
                   id: fc.id,
                   name: fc.name,
                   response: result,
                 });
               }
+
+              if (
+                functionResponses.length > 0 &&
+                wsRef.current?.readyState === WebSocket.OPEN
+              ) {
+                console.log(
+                  "[Voice] Sending toolResponse:",
+                  JSON.stringify(functionResponses).slice(0, 300),
+                );
+                wsRef.current.send(
+                  JSON.stringify({ toolResponse: { functionResponses } }),
+                );
+              }
+              return;
             }
 
-            // Send tool responses only for blocking functions
-            if (
-              functionResponses.length > 0 &&
-              wsRef.current?.readyState === WebSocket.OPEN
-            ) {
-              wsRef.current.send(
-                JSON.stringify({ toolResponse: { functionResponses } }),
-              );
-            }
-            return;
-          }
-
-          // Handle audio response
-          const parts = message.serverContent?.modelTurn?.parts;
-          if (parts) {
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                setStatus("speaking");
-                playback.enqueue(part.inlineData.data);
+            // Handle audio response
+            const parts = message.serverContent?.modelTurn?.parts;
+            if (parts) {
+              for (const part of parts) {
+                if (part.inlineData?.data) {
+                  setStatus("speaking");
+                  playback.enqueue(part.inlineData.data);
+                }
               }
             }
-          }
 
-          // Handle turn complete
-          if (message.serverContent?.turnComplete) {
-            setStatus("listening");
+            // Handle turn complete
+            if (message.serverContent?.turnComplete) {
+              setStatus("listening");
+            }
+          } catch (err) {
+            console.error("Error parsing message:", err);
           }
-        } catch (err) {
-          console.error("Error parsing message:", err);
-        }
+        });
       };
 
       ws.onerror = (e) => {
@@ -339,9 +349,9 @@ export function useVoice() {
             raw.includes("not enabled")
           ) {
             reason =
-              "Modelo de voz indisponível. Verifique se sua API key tem acesso ao Gemini Live Audio.";
+              "Funcionalidade não suportada pela sua API key. Verifique se seu plano do Gemini tem acesso a function calling na Live API.";
           }
-          console.error("WebSocket closed:", raw);
+          console.error("WebSocket closed:", raw, "code:", e.code);
           setErrorMessage(reason);
           setStatus("error");
         } else {

@@ -109,7 +109,6 @@ const VOICE_TOOLS: Tool[] = [
           },
           required: ["language", "code"],
         },
-        behavior: "NON_BLOCKING",
       },
       {
         name: "show_code",
@@ -135,7 +134,6 @@ const VOICE_TOOLS: Tool[] = [
           },
           required: ["language", "code"],
         },
-        behavior: "NON_BLOCKING",
       },
     ],
   },
@@ -186,15 +184,11 @@ export async function POST(req: Request) {
       },
       tools: VOICE_TOOLS.map((t) => ({
         functionDeclarations: t.functionDeclarations?.map((fd) => {
-          const decl: Record<string, unknown> = {
+          return {
             name: fd.name,
             description: fd.description,
             parameters: fd.parameters,
           };
-          if ((fd as any).behavior) {
-            decl.behavior = (fd as any).behavior;
-          }
-          return decl;
         }),
       })),
     };
