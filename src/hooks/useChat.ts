@@ -68,9 +68,9 @@ export function useChat() {
         const chunk = decoder.decode(value, { stream: true });
         fullText += chunk;
         
-        if (fullText.includes('[CLEAR_SCREEN]')) {
+        if (fullText.includes('[CLEAR_SCREEN]') || fullText.includes('<<<ACTION:CLEAR>>>')) {
           window.dispatchEvent(new CustomEvent("jarvis-clear"));
-          fullText = fullText.replace('[CLEAR_SCREEN]', '').trim();
+          fullText = fullText.replace('[CLEAR_SCREEN]', '').replace('<<<ACTION:CLEAR>>>', '').trim();
           // We continue because the model might still be talking after the clear
         }
 

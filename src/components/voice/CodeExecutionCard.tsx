@@ -59,10 +59,10 @@ export function VoiceCodeCardComponent({
   return (
     <div
       className={cn(
-        "w-full max-w-lg rounded-xl overflow-hidden border backdrop-blur-md",
+        "w-full max-w-lg rounded-xl overflow-hidden border backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]",
         hasError
-          ? "border-red-500/30 bg-[#1a0a0a]/90"
-          : "border-[#00d4ff]/30 bg-[#0a0f1a]/90",
+          ? "border-red-500/30 bg-[#1a0a0a]/95"
+          : "border-[#00d4ff]/30 bg-[#0a0f1a]/95",
       )}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-[#0d1525]/90 border-b border-[#00d4ff]/10">

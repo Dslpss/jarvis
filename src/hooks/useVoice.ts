@@ -133,7 +133,7 @@ async function executeFunctionCall(
       };
     }
 
-    if (name === "clear_display") {
+    if (name === "clear_display" || name === "ui_clear") {
       // In voice mode, we need a way to clear the local state
       // We'll return a special flag that the caller can use
       return {
@@ -141,6 +141,20 @@ async function executeFunctionCall(
         action: "clear_all",
         message: "[CLEAR_SCREEN]", // This tag will trigger the manual cleanup if needed
       };
+    }
+
+    if (name === "ui_show") {
+      if (onCodeCard) {
+        onCodeCard({
+          id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          mode: "display",
+          language: args.lang || "code",
+          code: args.code || "",
+          title: args.title || "",
+          timestamp: Date.now(),
+        });
+      }
+      return { success: true, message: "Display updated" };
     }
 
     return { error: `Unknown function: ${name}` };
@@ -155,6 +169,9 @@ export function useVoice() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [codeCards, setCodeCards] = useState<VoiceCodeCard[]>([]);
+  const setupRef = useRef<boolean>(false);
+  const transcriptBufferRef = useRef<string>("");
+  const processedActionsRef = useRef<Set<string>>(new Set());
   const mutedRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const msgQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -167,8 +184,50 @@ export function useVoice() {
     setCodeCards((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
+  const handleHybridAction = useCallback(async (text: string) => {
+    // Ultra-simple Regex for <<<TYPE::ARGS>>>
+    const regex = /<<<([\s\S]*?)>>>/g;
+    let match;
+    
+    while ((match = regex.exec(text)) !== null) {
+      const fullMatch = match[0];
+      if (processedActionsRef.current.has(fullMatch)) continue;
+      processedActionsRef.current.add(fullMatch);
+
+      const content = match[1];
+      const parts = content.split("::");
+      const type = parts[0].trim();
+
+      console.log(`[Voice] Hybrid Action: ${type}`, parts);
+
+      if (type === "CLEAR") {
+        window.dispatchEvent(new CustomEvent("jarvis-clear"));
+      } else if (type === "SHOW_CODE") {
+        const lang = (parts[1] || "code").trim();
+        const title = (parts[2] || "").trim();
+        const code = parts.slice(3).join("::").trim();
+        
+        if (code) {
+          setCodeCards((prev) => [
+            {
+              id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              mode: "display",
+              language: lang,
+              code: code,
+              title: title,
+              timestamp: Date.now(),
+            },
+            ...prev,
+          ]);
+        }
+      }
+    }
+  }, []);
+
   const clearVoiceContent = useCallback(() => {
     setCodeCards([]);
+    transcriptBufferRef.current = "";
+    processedActionsRef.current.clear();
   }, []);
 
   // Listen for global clear signal
@@ -313,7 +372,7 @@ export function useVoice() {
                   (card) => setCodeCards((prev) => [card, ...prev]),
                 );
 
-                if (fc.name === "clear_display") {
+                if (fc.name === "clear_display" || fc.name === "ui_clear") {
                   window.dispatchEvent(new CustomEvent("jarvis-clear"));
                 }
 
@@ -339,13 +398,28 @@ export function useVoice() {
               return;
             }
 
+            // Reset buffer on new model turn
+            if (message.serverContent?.modelTurn) {
+               // We don't necessarily want to wipe it if it's the same turn delivery
+            }
+
             // Handle audio response
             const parts = message.serverContent?.modelTurn?.parts;
             if (parts) {
               for (const part of parts) {
-                if (part.text && part.text.includes("[CLEAR_SCREEN]")) {
-                  window.dispatchEvent(new CustomEvent("jarvis-clear"));
-                  // Optionally remove the tag from the text if it was being displayed
+                if (part.text) {
+                  console.log("[Voice] Raw text part:", part.text);
+                  // Buffer the text to handle split tags
+                  transcriptBufferRef.current += part.text;
+                  console.log("[Voice] Cumulative buffer:", transcriptBufferRef.current);
+                  
+                  // Process hybrid actions from the cumulative buffer
+                  handleHybridAction(transcriptBufferRef.current);
+
+                  // Keep the existing clear screen tag support for backward compatibility
+                  if (part.text.includes("[CLEAR_SCREEN]")) {
+                    window.dispatchEvent(new CustomEvent("jarvis-clear"));
+                  }
                 }
                 if (part.inlineData?.data) {
                   setStatus("speaking");
@@ -357,6 +431,8 @@ export function useVoice() {
             // Handle turn complete
             if (message.serverContent?.turnComplete) {
               setStatus("listening");
+              transcriptBufferRef.current = ""; // Clear buffer after full delivery
+              processedActionsRef.current.clear();
             }
           } catch (err) {
             console.error("Error parsing message:", err);

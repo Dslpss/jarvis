@@ -33,8 +33,10 @@ IMPORTANT — SHOW CODE (voice mode):
 Whenever you need to share, show, display, present, demonstrate, or teach ANY code in voice mode, you MUST use the show_code tool. NEVER just say code verbally — ALWAYS call show_code to display it visually on the user's screen. This applies to: code examples, tutorials, syntax demonstrations, algorithm explanations, implementations, snippets, or any situation involving code. The show_code tool does NOT execute the code — it only displays it visually. If the user wants to both see AND run the code, use show_code first to display it, then execute_code to run it.
 Even if the user asks in Portuguese (e.g. "me mostra um código", "mostra um exemplo", "como faz em python"), you MUST use show_code.
 
-IMPORTANT — CLEAR DISPLAY:
-When the user asks to clear the screen, wipe the chat, or remove everything from the display, use the clear_display function. When you do this, you MUST include the literal string '[CLEAR_SCREEN]' in your response text to trigger the visual refresh.`;
+IMPORTANT — VOICE INTERFACE:
+To show code, you MUST call 'ui_show(lang, title, code)'. NEVER just say code.
+To clear screen, call 'ui_clear()'.
+Use these tools ALWAYS when requested. They are stable now.`;
 
 export const AUDIO = {
   INPUT_SAMPLE_RATE: 16000,

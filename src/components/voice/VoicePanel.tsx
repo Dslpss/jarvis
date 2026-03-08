@@ -61,7 +61,7 @@ export function VoicePanel() {
         <div
           className="fixed z-50 
           bottom-0 left-0 right-0 max-h-[50vh] p-3
-          sm:bottom-auto sm:right-auto sm:top-20 sm:left-4 sm:w-[28rem] sm:max-h-[calc(100vh-10rem)] sm:p-0
+          sm:bottom-auto sm:left-auto sm:top-24 sm:right-6 sm:w-[28rem] sm:max-h-[calc(100vh-10rem)] sm:p-0
           overflow-y-auto scrollbar-thin">
           <div className="flex flex-col gap-3">
             {codeCards.map((card) => (

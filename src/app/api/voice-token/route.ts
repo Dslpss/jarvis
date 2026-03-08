@@ -196,15 +196,30 @@ export async function POST(req: Request) {
           { text: JARVIS_SYSTEM_INSTRUCTION + timeContext + prefsContext },
         ],
       },
-      tools: VOICE_TOOLS.map((t) => ({
-        functionDeclarations: t.functionDeclarations?.map((fd) => {
-          return {
-            name: fd.name,
-            description: fd.description,
-            parameters: fd.parameters,
-          };
-        }),
-      })),
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: "ui_clear",
+              description: "reset display",
+              parameters: { type: Type.OBJECT, properties: {} }
+            },
+            {
+              name: "ui_show",
+              description: "show code display",
+              parameters: {
+                type: Type.OBJECT,
+                properties: {
+                  lang: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  code: { type: Type.STRING }
+                },
+                required: ["lang", "code"]
+              }
+            }
+          ]
+        }
+      ],
     };
 
     return Response.json({
