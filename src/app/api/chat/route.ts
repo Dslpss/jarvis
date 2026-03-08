@@ -3,6 +3,7 @@ import { Type, type Tool } from "@google/genai";
 import { MODELS, JARVIS_SYSTEM_INSTRUCTION } from "@/lib/constants";
 import { memoryService } from "@/lib/memoryService";
 import { executeCode } from "@/lib/codeExecutor";
+import { searchWeb } from "@/lib/providers/search";
 
 export const runtime = "nodejs";
 
@@ -79,6 +80,30 @@ const memoryTools: Tool[] = [
           required: ["language", "code"],
         },
       },
+      {
+        name: "web_search",
+        description:
+          "Perform a search on the internet for real-time information, news, or general knowledge that is not in your training data.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: {
+              type: Type.STRING,
+              description: "The search query to perform",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "get_system_context",
+        description:
+          "Get current system information like time, date, and general context to answer time-sensitive questions.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {},
+        },
+      },
     ],
   },
 ];
@@ -89,7 +114,8 @@ async function buildPrefsContext(): Promise<string> {
     if (prefs.length === 0) return "";
     const lines = prefs.map((p) => `- ${p.key}: ${p.value}`);
     return `\n\n[SAVED USER PREFERENCES]\n${lines.join("\n")}\n[END PREFERENCES]`;
-  } catch {
+  } catch (error: unknown) {
+    console.error("[PREFS] Error building context:", error);
     return "";
   }
 }
@@ -117,7 +143,7 @@ export async function POST(request: Request) {
     const similarMemories = await memoryService.searchSimilarMemories(userText);
     const memoryContext =
       similarMemories.length > 0
-        ? `\n\n[PAST CONTEXT FROM MEMORY]\n${similarMemories.map((m: any) => `- ${m.content}`).join("\n")}\n[END OF CONTEXT]`
+        ? `\n\n[PAST CONTEXT FROM MEMORY]\n${similarMemories.map((m: { content: string }) => `- ${m.content}`).join("\n")}\n[END OF CONTEXT]`
         : "";
 
     // 2. Criar instrução de sistema aumentada (com preferências + memórias semânticas)
@@ -157,13 +183,13 @@ export async function POST(request: Request) {
 
         async function executeFunctionCall(fc: {
           name: string;
-          args: any;
+          args: Record<string, any>;
         }): Promise<any> {
-          const args = fc.args || {};
+          const args = fc.args;
           switch (fc.name) {
             case "save_preference": {
               const saved = await memoryService.saveKeyValue(
-                args.key,
+                String(args.key),
                 args.value,
                 {
                   role: "user",
@@ -181,16 +207,16 @@ export async function POST(request: Request) {
               };
             }
             case "get_preference": {
-              const kv = await memoryService.getKeyValue(args.key);
+              const kv = await memoryService.getKeyValue(String(args.key));
               console.log(
                 `[LTM] Function call get_preference: key=${args.key}, found=${!!kv}`,
               );
               return kv
-                ? { found: true, key: args.key, value: kv.content }
-                : { found: false, key: args.key };
+                ? { found: true, key: String(args.key), value: kv.content }
+                : { found: false, key: String(args.key) };
             }
             case "delete_preference": {
-              const deleted = await memoryService.deleteKeyValue(args.key);
+              const deleted = await memoryService.deleteKeyValue(String(args.key));
               console.log(
                 `[LTM] Function call delete_preference: key=${args.key}, success=${deleted}`,
               );
@@ -198,10 +224,10 @@ export async function POST(request: Request) {
             }
             case "execute_code": {
               console.log(
-                `[CODE] Function call execute_code: language=${args.language}, code_length=${args.code?.length}`,
+                `[CODE] Function call execute_code: language=${args.language}, code_length=${(args.code as string)?.length}`,
               );
               try {
-                const result = await executeCode(args.language, args.code);
+                const result = await executeCode(String(args.language), String(args.code));
                 console.log(
                   `[CODE] Execution result: success=${result.success}, output_length=${result.output?.length}, time=${result.executionTimeMs}ms`,
                 );
@@ -225,6 +251,21 @@ export async function POST(request: Request) {
                   language: args.language,
                 };
               }
+            }
+            case "web_search": {
+              console.log(`[SEARCH] Function call web_search: query=${args.query}`);
+              const query = typeof args.query === 'string' ? args.query : String(args.query);
+              const searchResult = await searchWeb(query);
+              return searchResult as unknown as Record<string, unknown>;
+            }
+            case "get_system_context": {
+              const now = new Date();
+              return {
+                currentTime: now.toLocaleTimeString("pt-BR"),
+                currentDate: now.toLocaleDateString("pt-BR"),
+                dayOfWeek: now.toLocaleDateString("pt-BR", { weekday: "long" }),
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              };
             }
             default:
               return { error: `Unknown function: ${fc.name}` };
@@ -267,7 +308,7 @@ export async function POST(request: Request) {
               role: "assistant",
               timestamp: new Date().toISOString(),
             }),
-          ]).catch((err) =>
+          ]).catch((err: unknown) =>
             console.error("[LTM] Erro ao salvar conversa na memória:", err),
           );
 

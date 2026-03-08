@@ -1,6 +1,7 @@
 import { ArmorPlates } from '../ui/ArmorPlates';
 import { TacticalReticle } from '../ui/TacticalReticle';
 import { ArmorDiagnostics } from '../layout/ArmorDiagnostics';
+import { SystemMetrics } from '../hud/SystemMetrics';
 import Jarvis3DScene from '../3d/Jarvis3DScene';
 
 export function HudOverlay() {
@@ -28,6 +29,11 @@ export function HudOverlay() {
       <ArmorPlates />
       <ArmorDiagnostics />
       <TacticalReticle />
+
+      {/* New Features */}
+      <div className="absolute top-24 left-6 hidden md:block">
+        <SystemMetrics />
+      </div>
     </div>
   );
 }
