@@ -11,9 +11,12 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Initialize Firebase
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// Initialize Firebase only if the config is valid to avoid build-time crashes
+const app = (getApps().length > 0) 
+  ? getApp() 
+  : (firebaseConfig.apiKey ? initializeApp(firebaseConfig) : null);
+
+const auth = app ? getAuth(app) : ({} as any);
 const googleProvider = new GoogleAuthProvider();
 
 export { app, auth, googleProvider };
