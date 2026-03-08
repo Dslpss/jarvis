@@ -216,6 +216,11 @@ export async function POST(req: Request) {
                 },
                 required: ["lang", "code"]
               }
+            },
+            {
+              name: "get_briefing",
+              description: "fetch weather, news and agenda for today",
+              parameters: { type: Type.OBJECT, properties: {} }
             }
           ]
         }

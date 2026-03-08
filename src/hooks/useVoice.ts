@@ -8,6 +8,11 @@ import { AUDIO } from "@/lib/constants";
 import { useAppStore } from "@/stores/appStore";
 import type { VoiceStatus } from "@/types/voice";
 import type { VoiceCodeCard } from "@/components/voice/CodeExecutionCard";
+import type { VoiceBriefingCard } from "@/components/voice/BriefingCard";
+
+export type VoiceCard = 
+  | (VoiceCodeCard & { type: "code" }) 
+  | VoiceBriefingCard;
 
 const WS_BASE = "wss://generativelanguage.googleapis.com";
 
@@ -17,7 +22,7 @@ const WS_BASE = "wss://generativelanguage.googleapis.com";
 async function executeFunctionCall(
   name: string,
   args: Record<string, string>,
-  onCodeCard?: (card: VoiceCodeCard) => void,
+  onCard?: (card: VoiceCard) => void,
 ): Promise<Record<string, unknown>> {
   try {
     if (name === "save_preference") {
@@ -93,9 +98,10 @@ async function executeFunctionCall(
       });
       const data = await res.json();
 
-      if (onCodeCard) {
-        onCodeCard({
+      if (onCard) {
+        onCard({
           id: crypto.randomUUID(),
+          type: "code",
           mode: "execution",
           language: data.language || args.language,
           code: args.code,
@@ -117,9 +123,10 @@ async function executeFunctionCall(
     }
 
     if (name === "show_code") {
-      if (onCodeCard) {
-        onCodeCard({
+      if (onCard) {
+        onCard({
           id: crypto.randomUUID(),
+          type: "code",
           mode: "display",
           language: args.language || "code",
           code: args.code,
@@ -144,9 +151,10 @@ async function executeFunctionCall(
     }
 
     if (name === "ui_show") {
-      if (onCodeCard) {
-        onCodeCard({
+      if (onCard) {
+        onCard({
           id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          type: "code",
           mode: "display",
           language: args.lang || "code",
           code: args.code || "",
@@ -155,6 +163,24 @@ async function executeFunctionCall(
         });
       }
       return { success: true, message: "Display updated" };
+    }
+
+    if (name === "get_briefing") {
+      try {
+        const res = await fetch("/api/system/briefing");
+        const data = await res.json();
+        if (data.success && onCard) {
+          onCard({
+            id: `briefing-${Date.now()}`,
+            type: "briefing",
+            data: data.data,
+            timestamp: Date.now(),
+          });
+        }
+        return data.success ? data.data : { error: "Briefing unavailable" };
+      } catch (err) {
+        return { error: "Failed to fetch briefing" };
+      }
     }
 
     return { error: `Unknown function: ${name}` };
@@ -168,7 +194,7 @@ export function useVoice() {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  const [codeCards, setCodeCards] = useState<VoiceCodeCard[]>([]);
+  const [uiCards, setUiCards] = useState<VoiceCard[]>([]);
   const setupRef = useRef<boolean>(false);
   const transcriptBufferRef = useRef<string>("");
   const processedActionsRef = useRef<Set<string>>(new Set());
@@ -180,8 +206,8 @@ export function useVoice() {
   const waveform = useWaveformAnalyzer();
   const selectedVoice = useAppStore((s) => s.selectedVoice);
 
-  const dismissCodeCard = useCallback((id: string) => {
-    setCodeCards((prev) => prev.filter((c) => c.id !== id));
+  const dismissCard = useCallback((id: string) => {
+    setUiCards((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
   const handleHybridAction = useCallback(async (text: string) => {
@@ -208,9 +234,10 @@ export function useVoice() {
         const code = parts.slice(3).join("::").trim();
         
         if (code) {
-          setCodeCards((prev) => [
+          setUiCards((prev) => [
             {
               id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              type: "code",
               mode: "display",
               language: lang,
               code: code,
@@ -225,7 +252,7 @@ export function useVoice() {
   }, []);
 
   const clearVoiceContent = useCallback(() => {
-    setCodeCards([]);
+    setUiCards([]);
     transcriptBufferRef.current = "";
     processedActionsRef.current.clear();
   }, []);
@@ -369,7 +396,7 @@ export function useVoice() {
                 const result = await executeFunctionCall(
                   fc.name,
                   fc.args || {},
-                  (card) => setCodeCards((prev) => [card, ...prev]),
+                  (card) => setUiCards((prev) => [card, ...prev]),
                 );
 
                 if (fc.name === "clear_display" || fc.name === "ui_clear") {
@@ -499,15 +526,16 @@ export function useVoice() {
     status,
     errorMessage,
     muted,
-    codeCards,
+    uiCards,
     startSession,
     stopSession,
     toggleMute,
-    dismissCodeCard,
+    dismissCard,
     getFrequencyData: waveform.getFrequencyData,
     getAverageAmplitude: waveform.getAverageAmplitude,
     captureAnalyser: capture.getAnalyser,
     playbackAnalyser: playback.getAnalyser,
     setWaveformAnalyser: waveform.setAnalyser,
+    clearVoiceContent,
   };
 }

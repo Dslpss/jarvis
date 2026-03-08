@@ -8,17 +8,18 @@ import { VoiceStatus } from "./VoiceStatus";
 import { MuteButton } from "./MuteButton";
 import { VoiceSelector } from "./VoiceSelector";
 import { VoiceCodeCardComponent } from "./CodeExecutionCard";
+import { BriefingCard } from "./BriefingCard";
 
 export function VoicePanel() {
   const {
     status,
     errorMessage,
     muted,
-    codeCards,
+    uiCards,
     startSession,
     stopSession,
     toggleMute,
-    dismissCodeCard,
+    dismissCard,
     captureAnalyser,
     playbackAnalyser,
   } = useVoice();
@@ -56,21 +57,32 @@ export function VoicePanel() {
         </div>
       </HudFrame>
 
-      {/* Code cards — left side on desktop, bottom sheet on mobile */}
-      {codeCards.length > 0 && (
+      {/* UI cards — right side on desktop, bottom sheet on mobile */}
+      {uiCards.length > 0 && (
         <div
           className="fixed z-50 
           bottom-0 left-0 right-0 max-h-[50vh] p-3
-          sm:bottom-auto sm:left-auto sm:top-24 sm:right-6 sm:w-[28rem] sm:max-h-[calc(100vh-10rem)] sm:p-0
+          sm:bottom-auto sm:left-auto sm:top-24 sm:right-6 sm:w-auto sm:max-h-[calc(100vh-10rem)] sm:p-0
           overflow-y-auto scrollbar-thin">
-          <div className="flex flex-col gap-3">
-            {codeCards.map((card) => (
-              <VoiceCodeCardComponent
-                key={card.id}
-                card={card}
-                onDismiss={dismissCodeCard}
-              />
-            ))}
+          <div className="flex flex-col gap-3 items-end">
+            {uiCards.map((card) => {
+              if (card.type === "briefing") {
+                return (
+                  <BriefingCard
+                    key={card.id}
+                    card={card}
+                    onDismiss={dismissCard}
+                  />
+                );
+              }
+              return (
+                <VoiceCodeCardComponent
+                  key={card.id}
+                  card={card}
+                  onDismiss={dismissCard}
+                />
+              );
+            })}
           </div>
         </div>
       )}
