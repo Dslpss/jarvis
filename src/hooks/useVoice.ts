@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useAudioCapture } from "./useAudioCapture";
 import { useAudioPlayback } from "./useAudioPlayback";
 import { useWaveformAnalyzer } from "./useWaveformAnalyzer";
@@ -133,6 +133,16 @@ async function executeFunctionCall(
       };
     }
 
+    if (name === "clear_display") {
+      // In voice mode, we need a way to clear the local state
+      // We'll return a special flag that the caller can use
+      return {
+        success: true,
+        action: "clear_all",
+        message: "[CLEAR_SCREEN]", // This tag will trigger the manual cleanup if needed
+      };
+    }
+
     return { error: `Unknown function: ${name}` };
   } catch (err) {
     console.error("[Voice] executeFunctionCall error:", err);
@@ -156,6 +166,19 @@ export function useVoice() {
   const dismissCodeCard = useCallback((id: string) => {
     setCodeCards((prev) => prev.filter((c) => c.id !== id));
   }, []);
+
+  const clearVoiceContent = useCallback(() => {
+    setCodeCards([]);
+  }, []);
+
+  // Listen for global clear signal
+  useEffect(() => {
+    const handler = () => clearVoiceContent();
+    if (typeof window !== "undefined") {
+      window.addEventListener("jarvis-clear", handler);
+      return () => window.removeEventListener("jarvis-clear", handler);
+    }
+  }, [clearVoiceContent]);
 
   const startSession = useCallback(async () => {
     try {
@@ -290,6 +313,10 @@ export function useVoice() {
                   (card) => setCodeCards((prev) => [card, ...prev]),
                 );
 
+                if (fc.name === "clear_display") {
+                  window.dispatchEvent(new CustomEvent("jarvis-clear"));
+                }
+
                 functionResponses.push({
                   id: fc.id,
                   name: fc.name,
@@ -316,6 +343,10 @@ export function useVoice() {
             const parts = message.serverContent?.modelTurn?.parts;
             if (parts) {
               for (const part of parts) {
+                if (part.text && part.text.includes("[CLEAR_SCREEN]")) {
+                  window.dispatchEvent(new CustomEvent("jarvis-clear"));
+                  // Optionally remove the tag from the text if it was being displayed
+                }
                 if (part.inlineData?.data) {
                   setStatus("speaking");
                   playback.enqueue(part.inlineData.data);

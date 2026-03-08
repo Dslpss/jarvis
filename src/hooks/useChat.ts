@@ -1,12 +1,20 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChatMessage } from '@/types/chat';
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const handler = () => setMessages([]);
+    if (typeof window !== 'undefined') {
+      window.addEventListener("jarvis-clear", handler);
+      return () => window.removeEventListener("jarvis-clear", handler);
+    }
+  }, []);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming) return;
@@ -57,7 +65,15 @@ export function useChat() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        fullText += decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, { stream: true });
+        fullText += chunk;
+        
+        if (fullText.includes('[CLEAR_SCREEN]')) {
+          window.dispatchEvent(new CustomEvent("jarvis-clear"));
+          fullText = fullText.replace('[CLEAR_SCREEN]', '').trim();
+          // We continue because the model might still be talking after the clear
+        }
+
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsg.id ? { ...m, text: fullText } : m
@@ -93,5 +109,9 @@ export function useChat() {
     setIsStreaming(false);
   }, []);
 
-  return { messages, isStreaming, sendMessage, stopStreaming };
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+  }, []);
+
+  return { messages, isStreaming, sendMessage, stopStreaming, clearMessages };
 }

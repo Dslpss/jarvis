@@ -135,6 +135,20 @@ const VOICE_TOOLS: Tool[] = [
           required: ["language", "code"],
         },
       },
+      {
+        name: "clear_display",
+        description:
+          "Clears the current chat display, code cards, and visual logs when requested by the user.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            reason: {
+              type: Type.STRING,
+              description: "Optional reason for clearing",
+            },
+          },
+        },
+      },
     ],
   },
 ];

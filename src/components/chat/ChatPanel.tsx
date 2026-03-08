@@ -7,7 +7,7 @@ import { ChatInput } from "./ChatInput";
 import { HudFrame } from "@/components/ui/HudFrame";
 
 export function ChatPanel() {
-  const { messages, isStreaming, sendMessage } = useChat();
+  const { messages, isStreaming, sendMessage, clearMessages } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -18,6 +18,14 @@ export function ChatPanel() {
       });
     }
   }, [messages]);
+
+  const handleSendMessage = (text: string) => {
+    if (text.trim().toLowerCase() === "/clear") {
+      window.dispatchEvent(new CustomEvent("jarvis-clear"));
+      return;
+    }
+    sendMessage(text);
+  };
 
   return (
     <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
@@ -50,7 +58,7 @@ export function ChatPanel() {
         </div>
       </HudFrame>
 
-      <ChatInput onSend={sendMessage} disabled={isStreaming} />
+      <ChatInput onSend={handleSendMessage} disabled={isStreaming} />
     </div>
   );
 }

@@ -104,6 +104,19 @@ const memoryTools: Tool[] = [
           properties: {},
         },
       },
+      {
+        name: "clear_display",
+        description: "Clears the current chat display or code card when explicitly requested by the user.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            reason: {
+              type: Type.STRING,
+              description: "Optional reason for clearing the display.",
+            },
+          },
+        },
+      },
     ],
   },
 ];
@@ -251,6 +264,10 @@ export async function POST(request: Request) {
                   language: args.language,
                 };
               }
+            }
+            case "clear_display": {
+              console.log("[HUD] Function call clear_display requested");
+              return { success: true, action: "clear", tag: "[CLEAR_SCREEN]" };
             }
             case "web_search": {
               console.log(`[SEARCH] Function call web_search: query=${args.query}`);
